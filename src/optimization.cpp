@@ -82,6 +82,8 @@ Solution optimize(const Scenario &scene, Fleet reference,
             guess[index(i, last, c)] = value;
       }
       double ux = cos(vehicle.heading), uy = sin(vehicle.heading);
+      if (std::abs(ux) < 1e-12) ux = 0;
+      if (std::abs(uy) < 1e-12) uy = 0;
       // Endpoint lies beyond the exit on its outbound ray, Eq.(6); it is not
       // fixed.
       add((q(i, last, X) - vehicle.exit[0]) * ux +
@@ -127,11 +129,13 @@ Solution optimize(const Scenario &scene, Fleet reference,
     options["print_time"] = false;
     options["ipopt.print_level"] = 0;
     options["ipopt.sb"] = "yes";
-    options["ipopt.tol"] = 1e-10;
-    options["ipopt.acceptable_tol"] = 1e-8;
+    options["ipopt.tol"] = weight >= 1e8 ? 1e-12 : 1e-10;
+    options["ipopt.acceptable_iter"] = 0;
     options["ipopt.max_iter"] = 3000;
     options["ipopt.max_cpu_time"] = 180.;
     options["ipopt.linear_solver"] = linear_solver;
+    options["ipopt.mu_strategy"] = "adaptive";
+    options["ipopt.ma27_pivtol"] = 1e-6;
     options["ipopt.bound_relax_factor"] = 0.;
     options["ipopt.nlp_scaling_method"] = "none";
     if (const char *hsl = std::getenv("HSL_LIBRARY"))
@@ -219,7 +223,7 @@ Solution optimize(const Scenario &scene, Fleet reference,
     // discussed in the appendix. Initial weight is Table II's 200; this is a
     // documented numerical choice for this independently implemented
     // demonstration.
-    weight *= 100;
+    weight *= 200;
   }
   throw std::runtime_error("LIOM did not meet the weighted infeasibility "
                            "threshold within the iteration budget");

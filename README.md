@@ -1,183 +1,250 @@
-# Cooperative Trajectory Planning at Unstructured Intersections
+# Lane-Free Cooperative Trajectory Planning
 
-**C++ / CasADi companion example for Chapter 10 of the Chinese-language book《非结构化场景自动驾驶轨迹规划技术》** (*Trajectory Planning Techniques for Autonomous Driving in Unstructured Environments*, English rendering of the Chinese title).
+**10 heterogeneous CAVs · C++ and MATLAB · CasADi / IPOPT / MA27**
 
-This repository implements a numerical example of the computational optimal-control framework in **Bu et al., IEEE T-ITS, 2025**. Two vehicles with different dimensions traverse a lane-free intersection with unequal corner boundaries. The program generates an initial guess, constructs absolute and relative safe travel corridors, and solves cooperative trajectories using LIOM.
+Companion code for **Chapter 10 of the Chinese-language book《非结构化场景自动驾驶轨迹规划技术》** — *Trajectory Planning Techniques for Autonomous Driving in Unstructured Environments* (English rendering of the Chinese title). This chapter studies cooperative trajectory planning at unstructured, unsignalized intersections: vehicles share the intersection space while avoiding one another and respecting vehicle kinematics.
 
-The executable writes numerical results and convergence diagnostics. It requires neither MATLAB nor AMPL and contains no Python implementation or visualization component.
+![Ten jointly optimized vehicle trajectories and synchronized snapshots](docs/images/cooperative_trajectories.png)
 
-## Method
+*An actual MATLAB run of the supplied ten-vehicle example. Colors identify vehicles; pale rectangles show body footprints. Each snapshot displays vehicles at the same instant. Crossings between complete spatial paths do not imply simultaneous collisions.*
 
-```text
-Vehicle geometry + boundary map + initial states + exit rays
-                            |
-             MVSFM forward-simulation initial guess
-                            |
-          STCs for boundaries + RSTCs for vehicle pairs
-                            |
-             Linear corridor/boundary constraints
-              + nonlinear kinematic penalty cost
-                            |
-                    CasADi / IPOPT solve
-                            |
-           Rebuild corridors and check infeasibility
-                            |
-               Validated trajectories and CSVs
+## Research background and citation
+
+Please cite **both papers** when using this chapter's companion code. The metaverse paper is listed first as the related lane-free intersection-management foundation; the 2025 paper supplies the MVSFM, STC/RSTC and LIOM trajectory-planning framework implemented here.
+
+1. **B. Li, D. Cao, S. Tang, T. Zhang, H. Dong, Y. Wang, and F.-Y. Wang**, “Sharing Traffic Priorities via Cyber–Physical–Social Intelligence: A Lane-Free Autonomous Intersection Management Method in Metaverse,” *IEEE Transactions on Systems, Man, and Cybernetics: Systems*, **vol. 53, no. 4, pp. 2025–2036, Apr. 2023**, doi: [10.1109/TSMC.2022.3225250](https://doi.org/10.1109/TSMC.2022.3225250). **First published online on December 13, 2022**; use **2023** for the final journal-volume citation.
+2. **F. Bu, B. Li, P. Chen, G. Yu, and Y. Wang**, “Real-Time Cooperative Trajectory Planning for Multiple CAVs at Unstructured Intersections: A Computational Optimal Control Approach,” *IEEE Transactions on Intelligent Transportation Systems*, **vol. 26, no. 11, pp. 18963–18977, Nov. 2025**, doi: [10.1109/TITS.2025.3597472](https://doi.org/10.1109/TITS.2025.3597472).
+
+Copy-ready BibTeX is provided [below](#bibtex) and in [CITATION.bib](CITATION.bib).
+
+## What the example computes
+
+Ten vehicles enter from four approaches, with three different vehicle geometries. Unequal corner boundaries define the free space. **All ten trajectories are optimized jointly**, including potentially interacting pairs.
+
+The example uses a **40 s horizon and 200 configurations per vehicle**. A run builds an initial guess, constructs safe corridors, repeatedly solves the cooperative optimization problem, validates the trajectories and exports numerical results. MATLAB also opens **exactly two static figures**:
+
+1. Cooperative trajectories, body footprints and synchronized intersection snapshots.
+2. Speed, acceleration, steering angle, steering rate, heading and clearance histories.
+
+![Optimal state and control histories for the ten CAVs](docs/images/state_control_profiles.png)
+
+The C++ and MATLAB versions implement the same scene, equations, bounds and solver settings. MATLAB performs its own optimization; it does not call the C++ program or load a saved answer. Neither version uses AMPL. This repository demonstrates **one cooperative cluster**; the papers also address the wider intersection-management setting, including priority sharing and successive clusters.
+
+## Method and architecture
+
+```mermaid
+flowchart TD
+    A[Vehicle geometry, map, initial states and exit rays] --> B[MVSFM: synchronous multi-vehicle simulation]
+    B --> C[STCs for absolute vehicle positions]
+    C --> D[RSTCs for relative positions of interacting pairs]
+    D --> E[Joint LIOM problem: linear constraints and nonlinear penalty objective]
+    E --> F[CasADi derivatives + IPOPT + MA27]
+    F --> G{Kinematic and slack penalties below tolerance?}
+    G -->|No| C
+    G -->|Yes| H[Check physical clearance, dynamics, bounds and exits]
+    H --> I[CSV trajectories and diagnostics]
+    H --> J[MATLAB: two static figures]
 ```
 
-1. **MVSFM:** guiding-point attraction, exponential vehicle/boundary repulsion, steering saturation, and synchronous bicycle-model simulation.
-2. **STCs:** grow axis-aligned boxes for vehicle disc centers inside dilated free space.
-3. **RSTCs:** grow boxes in relative-position space outside the pairwise collision disc. Nonnegative slack variables resolve temporary corridor conflicts.
-4. **LIOM:** soften the differential and disc-center equations into squared penalties. All constraints of each intermediate NLP are linear.
-5. **Acceptance:** require `Jkinematics + Jslack <= 1e-6`, then check clearance using centers recomputed from the vehicle states.
+### Vehicle model and boundary conditions
 
-This is an independently organized, single-cluster example. It does not reproduce the paper's 1,000-vehicle experiment, reservation platform, HIL system, or original experimental map.
+Each vehicle has rear-axle position $(x_i,y_i)$, speed $v_i$, heading $\theta_i$, steering angle $\phi_i$, acceleration $a_i$ and steering rate $\omega_i$. The bicycle equations are
 
-## Install and run
+$$
+\dot x_i=v_i\cos\theta_i,\quad \dot y_i=v_i\sin\theta_i,\quad
+\dot v_i=a_i,\quad \dot\theta_i=v_i\tan\phi_i/L_{Wi},\quad \dot\phi_i=\omega_i.
+$$
 
-### Requirements
+Initial states and controls are fixed. Terminal speed, heading, acceleration, steering angle and steering rate are specified. The terminal position lies **on an outbound ray beyond the exit**, allowing vehicles to continue away from the intersection. The desired target in the objective lies beyond the distance reachable during the horizon.
 
-- A **C++17 compiler** and **CMake 3.16+**.
-- **CasADi**, including its C++ headers, CMake package, link library, and **IPOPT plugin**.
-- The shared-library runtime supplied with that CasADi build.
+### MVSFM initialization
 
-CasADi supplies symbolic expressions and derivatives; IPOPT solves the nonlinear objective under the linear constraints. See the [official installation instructions](https://github.com/casadi/casadi/wiki/InstallationInstructions), [downloads](https://web.casadi.org/get/), and [documentation](https://web.casadi.org/docs/).
+The multi-vehicle social-force model combines attraction toward the second forward guiding point with exponential repulsion from other vehicles and boundaries. Equation (25) determines the bounded steering angle directly; synchronous simulation updates all vehicles from the same time slice. The result initializes both the NLP and its corridors. Steering-rate consistency is enforced during optimization.
 
-Use a CasADi SDK compatible with your compiler. In particular, do not mix a MinGW C++ library with an MSVC executable. The SDK must contain `casadi/casadi.hpp`, the link library, `casadi-config.cmake`, and the IPOPT plugin; a single DLL is insufficient.
+### Absolute and relative safe travel corridors
 
-### Linux
+An auxiliary center $(x_i^c,y_i^c)$ and a covering disc represent each rectangular vehicle. The center follows Eq. (10a); its covering radius is the rectangle's geometric half-diagonal.
 
-With a compatible CasADi SDK installed:
+- An **STC** confines a vehicle center to axis-aligned boxes that remain clear of the road boundaries.
+- An **RSTC** confines $(x_i^c-x_j^c,y_i^c-y_j^c)$ outside the pair's collision disc.
+- A nonnegative slack variable temporarily relaxes each relative box; a linear penalty discourages residual conflicts.
+
+Boxes expand in the up/down/left/right sequence. Pairs whose absolute corridors cannot bring their discs into contact are omitted from that subproblem. Final validation still checks **all 45 vehicle pairs**.
+
+### LIOM optimization
+
+The normal cost rewards smooth controls and progress toward the desired targets:
+
+$$
+J_{\rm norm}=\sum_i\left[w_{\rm smo}\int_0^{T_f}(a_i^2+\omega_i^2)\,dt+
+\|(x_i(T_f),y_i(T_f))-(x_i^d,y_i^d)\|_2^2\right].
+$$
+
+The nonlinear differential equations and disc-center identities are softened into squared residuals. Each subproblem minimizes $J_{\rm norm}+J_{\rm slack}+J_{\rm kinematics}$ subject to **linear corridor, state/control bound and boundary constraints**. The current trajectories guide the next set of corridors. Acceptance requires
+
+$$J_{\rm slack}+J_{\rm kinematics}\leq10^{-6},$$
+
+followed by physical clearance checks using centers recomputed from $(x,y,\theta)$.
+
+### Equation-to-source map
+
+| 2025 paper component | C++ | MATLAB |
+|---|---|---|
+| Bicycle dynamics and bounds, Eqs. (2)–(3) | `src/simulation.cpp`, `src/optimization.cpp` | `SimulateMVSFM.m`, `OptimizeLIOM.m` |
+| Initial states and exit rays, Eqs. (5)–(7) | `src/scenario.cpp`, `src/optimization.cpp` | `CreateScenario.m`, `OptimizeLIOM.m` |
+| Smoothness/progress objective, Eq. (8) | `src/optimization.cpp` | `OptimizeLIOM.m` |
+| Auxiliary center, Eq. (10a) | `src/scenario.cpp` | `CreateScenario.m`, `ValidateSolution.m` |
+| STC/RSTC, Algorithms 1–2 | `src/corridors.cpp` | `BuildCorridors.m` |
+| Relative slack, Eqs. (18)–(19) | `src/optimization.cpp` | `OptimizeLIOM.m` |
+| MVSFM forces/steering, Eqs. (21)–(25) | `src/simulation.cpp` | `SimulateMVSFM.m` |
+| LIOM, Eqs. (26)–(29), Algorithm 3 | `src/optimization.cpp` | `OptimizeLIOM.m` |
+
+## Install the numerical dependencies
+
+Both versions use **CasADi, IPOPT and HSL MA27**. MA27 is selected explicitly by default. Missing MA27 support produces an error; the code does not silently substitute another solver.
+
+1. Obtain **CasADi 3.7.2** from the [official downloads](https://web.casadi.org/get/). For MATLAB, choose the MATLAB package for your OS. For C++, use an SDK with headers, link library, CMake package and IPOPT plugin.
+2. Install a compatible **HSL library containing MA27**, for example from the [official Coin-HSL distribution](https://licences.stfc.ac.uk/product/coin-hsl), following its installation and license terms. HSL is not redistributed here.
+3. Set **`HSL_LIBRARY`** to the shared library's full path and expose its runtime dependencies to the dynamic loader. The code passes that path to IPOPT's [`hsllib` option](https://coin-or.github.io/Ipopt/OPTIONS.html#OPT_hsllib). It can be omitted when your IPOPT already links MA27 directly.
+
+Use compatible architectures and compiler runtimes. In particular, a MinGW C++ SDK cannot be substituted for an MSVC SDK. A DLL alone is not a complete CasADi C++ installation.
+
+### MATLAB: one run, two figures
+
+Validated with MATLAB R2021b and the official CasADi 3.7.2 MATLAB package. No MATLAB optimization toolbox is needed.
+
+```matlab
+% One-time setup: replace these installation paths.
+addpath('C:\path\to\casadi-3.7.2-windows64-matlab2018b');
+setenv('HSL_LIBRARY','C:\path\to\hsl\libcoinhsl-2.dll');
+setenv('PATH',['C:\path\to\hsl;' getenv('PATH')]);
+
+% Open RunMe.m and press Run, or execute:
+cd('C:\path\to\AIM_2025\matlab');
+result = RunMe;
+```
+
+Alternatively, set `CASADI_MATLAB_PATH` to the extracted CasADi package directory; `RunMe` adds it automatically. On Linux, select the Linux MATLAB package and HSL `.so`, and configure `LD_LIBRARY_PATH` before starting MATLAB if needed.
+
+Outputs appear in `matlab/results/`. Edit `CreateScenario.m` to change the scene or task; the state order is documented in that file.
+
+### C++: configure, build and run
+
+Requirements: a **C++17 compiler**, **CMake 3.16+**, a compatible CasADi C++ SDK and MA27.
+
+Linux:
 
 ```bash
 git clone https://github.com/libai1943/AIM_2025.git
 cd AIM_2025
+export HSL_LIBRARY=/absolute/path/to/libcoinhsl.so
+export LD_LIBRARY_PATH=/absolute/path/to/casadi:/absolute/path/to/hsl:$LD_LIBRARY_PATH
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -Dcasadi_DIR=/absolute/path/to/casadi/cmake
 cmake --build build -j
-export LD_LIBRARY_PATH=/absolute/path/to/casadi:$LD_LIBRARY_PATH
 ./build/aim_demo --output results
 ```
 
-For system-style installations, libraries may be under `<prefix>/lib` and the CMake package under `<prefix>/lib/cmake/casadi`; use your actual installation paths.
-
-To build CasADi itself against system IPOPT on Debian/Ubuntu:
-
-```bash
-sudo apt-get update
-sudo apt-get install build-essential cmake git pkg-config coinor-libipopt-dev
-git clone --branch 3.7.2 --depth 1 https://github.com/casadi/casadi.git casadi-source
-cmake -S casadi-source -B casadi-build \
-  -DCMAKE_BUILD_TYPE=Release -DWITH_IPOPT=ON -DWITH_PYTHON=OFF \
-  -DCMAKE_INSTALL_PREFIX=$PWD/casadi-install
-cmake --build casadi-build -j
-cmake --install casadi-build
-```
-
-Then configure this repository with `-DCMAKE_PREFIX_PATH=/absolute/path/to/casadi-install`. Building the CasADi core without `WITH_IPOPT=ON` does not provide the required solver plugin. Package availability and library layouts depend on the distribution.
-
-### Windows / MinGW-w64
-
-Install CMake, MinGW-w64, and a compatible CasADi SDK. In PowerShell:
+Windows / MinGW-w64, in PowerShell:
 
 ```powershell
-$env:PATH = "C:\path\to\casadi;C:\path\to\mingw64\bin;" + $env:PATH
-cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -Dcasadi_DIR=C:/path/to/casadi/cmake
+$env:HSL_LIBRARY = 'C:\path\to\hsl\libcoinhsl-2.dll'
+$env:PATH = 'C:\path\to\casadi;C:\path\to\hsl;C:\path\to\mingw64\bin;' + $env:PATH
+cmake -S . -B build -G 'MinGW Makefiles' -DCMAKE_BUILD_TYPE=Release -Dcasadi_DIR=C:/path/to/casadi/cmake
 cmake --build build
 .\build\aim_demo.exe --output results
 ```
 
-MSVC requires an MSVC-compatible SDK; its multi-configuration generator normally places the executable under `build/Release/`.
+For system installations, `casadi-config.cmake` may be under `<prefix>/lib/cmake/casadi`; use the actual path. An MSVC build needs its matching SDK and usually places the executable in `build/Release/`.
 
-### Optional HSL
+`--linear-solver ma27` explicitly restates the default. With the same environment, `ctest --test-dir build --output-on-failure` runs the numerical example. C++ exports results without opening graphics windows.
 
-The default IPOPT linear solver is **MUMPS**. HSL is optional and not bundled. With a separately installed, compatible HSL library, set `HSL_LIBRARY` to its full path and run:
+## Files and responsibilities
 
-```bash
-./build/aim_demo --linear-solver ma57 --output results
-```
-
-The paper used MA27. Keep the chosen HSL library's runtime dependencies visible to the dynamic loader.
-
-## Numerical results
-
-A successful run returns exit code 0 and creates:
-
-| File | Contents |
+| File | Purpose |
 |---|---|
-| `results/trajectories.csv` | `vehicle,t,x,y,v,a,phi,omega,theta,xc,yc` at each configuration |
-| `results/iterations.csv` | Iteration, penalty weight, normal cost, kinematic cost, slack cost, weighted infeasibility |
+| `include/aim/planner.hpp` | C++ state, parameter, geometry, corridor and solution types |
+| `src/main.cpp` | Entry point, solver selection, orchestration, CSV output and errors |
+| `src/scenario.cpp` | Ten-vehicle scene, body geometry and physical clearance |
+| `src/simulation.cpp` | Synchronous MVSFM initialization |
+| `src/corridors.cpp` | STC/RSTC expansion and interacting-pair selection |
+| `src/optimization.cpp` | Joint symbolic NLP, LIOM iterations, MA27 and acceptance checks |
+| `CMakeLists.txt` | C++ build and numerical test |
+| `matlab/RunMe.m` | One-click computation, validation, output and two figures |
+| `matlab/CreateScenario.m` | Matching scene, vehicles, conditions and parameters |
+| `matlab/SimulateMVSFM.m` | MATLAB forward-simulation initializer |
+| `matlab/BuildCorridors.m` | Absolute and relative corridor construction |
+| `matlab/OptimizeLIOM.m` | MATLAB/CasADi joint NLP and LIOM loop |
+| `matlab/ValidateSolution.m` | Independent dynamics, all-pair clearance, bound and endpoint checks |
+| `matlab/ExportResults.m` | Full-precision CSVs and MATLAB result archive |
+| `matlab/PlotResults.m` | Static trajectory/footprint and state/control figures |
+| `docs/images/` | Actual run images used in this README |
+| `CITATION.bib` | Both journal references |
 
-Lengths are in metres, time in seconds, and angles in radians. `(x,y)` denotes the rear-axle midpoint; `(xc,yc)` is the auxiliary disc center. Each vehicle has 200 configurations, including both endpoints of the 40-second horizon. Failed optimization or validation returns a nonzero exit code.
-
-## Mapping to the paper
-
-| Paper component | Implementation |
+| Output | Contents |
 |---|---|
-| Bicycle dynamics and limits, Eqs. (2)–(3) | `simulation.cpp`, `optimization.cpp` |
-| Initial states and outbound endpoint rays, Eqs. (5)–(7) | `scenario.cpp`, `optimization.cpp` |
-| Smoothness and desired-target objective, Eq. (8) | `optimization.cpp` |
-| Disc-center geometry, Eq. (10a) | `scenario.cpp`, `optimization.cpp` |
-| STC / RSTC, Algorithms 1–2 | `corridors.cpp` |
-| Relative corridor slack, Eqs. (18)–(19) | `optimization.cpp` |
-| MVSFM forces and steering, Eqs. (21)–(25) | `simulation.cpp` |
-| LIOM penalties and acceptance, Eqs. (26)–(29), Algorithm 3 | `optimization.cpp` |
+| `trajectories.csv` | `vehicle,t,x,y,v,a,phi,omega,theta,xc,yc` at every configuration |
+| `iterations.csv` | Iteration, penalty, normal cost, weighted kinematic cost, slack cost, infeasibility |
+| `solution.mat` (MATLAB) | Scene, initial guess, optimized trajectories and validation metrics |
+| `cooperative_trajectories.png` (MATLAB) | Trajectories, footprints and synchronized snapshots |
+| `state_control_profiles.png` (MATLAB) | State, control and clearance histories |
 
-Terminal positions may advance along their outbound rays. They are **not fixed to the desired targets**, which lie beyond the distance reachable within the planning horizon.
+Lengths, times and angles use metres, seconds and radians. Failed optimization or feasibility checks produce an error rather than labeling the result successful.
 
-### Parameters from Table II
+## Parameters and reproducibility
+
+Settings from Table II of the 2025 paper:
 
 | Parameter | Value |
 |---|---:|
 | Horizon / configurations per vehicle | 40 s / 200 |
-| Maximum LIOM solves | 6 |
-| Weighted infeasibility threshold | 1e-6 |
-| Smoothness weight | 0.001 |
-| Initial kinematic penalty | 200 |
+| Maximum LIOM solves / infeasibility threshold | 6 / 1e-6 |
+| Smoothness weight / initial kinematic penalty | 0.001 / 200 |
 | Attractive / repulsive weights | 0.001 / 0.6 |
 | Turning coefficient | 0.6 |
-| Speed bounds | [3, 10] m/s |
-| Acceleration bounds | [-2, 2] m/s² |
-| Steering / steering-rate limits | 0.4 rad / 0.3 rad/s |
+| Speed / acceleration bounds | [3, 10] m/s / ±2 m/s² |
+| Steering / steering-rate bounds | ±0.4 rad / ±0.3 rad/s |
 
-### Explicit implementation conventions
+The supplied map and ten-vehicle task are a constructed demonstration. Numerical conventions are explicit:
 
-These choices distinguish a reproducible demonstration from the original experimental package:
+- **Discretization:** 200 endpoint-inclusive configurations, forward Euler, `dt = 40/199`, and rectangular quadrature for control and differential-residual terms.
+- **Guiding routes:** straight boundary-feasible, zero-control-cost individual routes on a 2 m grid. Optimized trajectories can deviate from them.
+- **Force conversion:** unit-mass longitudinal projection and a 0.5 m exponential distance scale. These details are not fully specified in the paper.
+- **Corridors:** 0.25 m expansion steps and 5 m per-side limits. A temporarily unsafe soft iterate receives a nearby safe seed.
+- **Penalty continuation:** initial weight 200, multiplied by 200 after an unsuccessful iteration. This implements the external-penalty limit; the multiplier is a demo setting, not a Table II value.
+- **NLP solution:** constant objective scaling, Gauss–Newton curvature for squared residuals, adaptive IPOPT barrier updates and explicit MA27. Later penalty stages use tighter tolerances. Relative slack is reduced to its smallest feasible value at the computed states before acceptance.
 
-- **Discretization:** 200 endpoint-inclusive configurations, forward Euler with `dt = 40/199`, and left rectangular quadrature for time integrals.
-- **Vehicle coverage:** use Eq. (10a)'s center and the geometric radius `0.5*hypot(LW+LF+LR, LB)`. This covers the complete rectangle; the printed subscripts in Eq. (10b) do not yield that covering radius.
-- **Guiding routes:** the two straight routes are zero-control-cost solutions of their individual boundary-only guiding problems. MVSFM selects the second forward point on a 2 m route grid. Longitudinal force is projected onto the heading with unit mass; the paper does not specify that conversion or the distance-scale value. The demo uses a 0.5 m distance scale.
-- **Corridors:** expansion uses 0.25 m steps and a 5 m limit per side. Potential pair selection includes the disc radii. If a soft intermediate state enters a dilated boundary, its corridor seed is moved to nearby free space before expansion.
-- **Penalty continuation:** start with Table II's weight 200 and multiply by 100 after an unsuccessful outer iteration. This is a numerical implementation of the large-penalty limit discussed in the appendix; the multiplier is a demo setting, not a Table II value. Acceptance uses the current weighted penalty.
-- **NLP solution:** use a Gauss–Newton Hessian approximation for squared defects and constant objective scaling. At the computed states, each slack is reduced analytically to its smallest linearly feasible value, removing unnecessary interior-point barrier slack.
+Both versions were executed on Windows with CasADi 3.7.2 and MA27, using GCC 16.2 and MATLAB R2021b. Independent recomputation checked **2,000 configurations and all 45 vehicle pairs**, including dynamics, body coverage, bounds and exit rays. Both completed six LIOM solves with zero final relative slack, weighted infeasibility below `2e-7` and minimum covering-disc clearance approximately **3.72 m**. Their exported rear-axle positions differed by at most approximately **0.00012 m**.
 
-The metaverse paper below provides related background on lane-free management and priority sharing. This example implements the 2025 corridor/LIOM framework; it does not implement virtual-currency trading.
+These are results of this example, not the papers' benchmark statistics. Validation concerns discrete configurations and the Euler model. Linux instructions describe deployment; execution was verified on Windows. Priority trading and the full multi-cluster reservation system are outside this single-cluster example.
 
-## Source map
+## BibTeX
 
-| File | Responsibility |
-|---|---|
-| `include/aim/planner.hpp` | State components, vehicle geometry, parameters, corridor/result types |
-| `src/scenario.cpp` | Constructed intersection, heterogeneous vehicles, disc geometry, clearance calculation |
-| `src/simulation.cpp` | Synchronous multi-vehicle forces and bicycle-model simulation |
-| `src/corridors.cpp` | Absolute/relative box growth and potentially interacting pair selection |
-| `src/optimization.cpp` | CasADi model, penalties, linear constraints, solver, LIOM loop and acceptance |
-| `src/main.cpp` | Command-line entry, orchestration, CSV export, failure reporting |
-| `CMakeLists.txt` | Build and numerical smoke test |
-| `CITATION.bib` | Both required references |
+```bibtex
+@article{li2023metaverse,
+  author  = {Li, Bai and Cao, Dongpu and Tang, Shiqi and Zhang, Tantan
+             and Dong, Hairong and Wang, Yaonan and Wang, Fei-Yue},
+  title   = {Sharing Traffic Priorities via Cyber--Physical--Social Intelligence:
+             A Lane-Free Autonomous Intersection Management Method in Metaverse},
+  journal = {IEEE Transactions on Systems, Man, and Cybernetics: Systems},
+  year    = {2023},
+  volume  = {53},
+  number  = {4},
+  pages   = {2025--2036},
+  doi     = {10.1109/TSMC.2022.3225250}
+}
 
-This is a planning example, not a low-level controller. Validation applies to the discrete configurations and Euler transcription; no continuous-time collision certificate is claimed.
+@article{bu2025cooperative,
+  author  = {Bu, Fan and Li, Bai and Chen, Peng and Yu, Guizhen and Wang, Yunpeng},
+  title   = {Real-Time Cooperative Trajectory Planning for Multiple CAVs at
+             Unstructured Intersections: A Computational Optimal Control Approach},
+  journal = {IEEE Transactions on Intelligent Transportation Systems},
+  year    = {2025},
+  volume  = {26},
+  number  = {11},
+  pages   = {18963--18977},
+  doi     = {10.1109/TITS.2025.3597472}
+}
+```
 
-### Verified example
-
-The default example was compiled with GCC 16.2 and CasADi 3.7.2 on Windows and executed with IPOPT/MUMPS. Independent recomputation from the exported CSVs checked all 400 configurations, endpoint rays, control bounds, forward-Euler defects, disc geometry, and pairwise/boundary clearance. The run completed six LIOM solves with weighted infeasibility approximately `6.41e-7` and minimum covering-disc clearance approximately `5.15 m`. These are results of this constructed example, not the paper's benchmark statistics. Linux build instructions are provided; Linux execution has not been verified here.
-
-## Citation
-
-Please cite **both** papers when using this companion implementation:
-
-> Fan Bu, Bai Li, Peng Chen, Guizhen Yu, and Yunpeng Wang, “Real-Time Cooperative Trajectory Planning for Multiple CAVs at Unstructured Intersections: A Computational Optimal Control Approach,” *IEEE Transactions on Intelligent Transportation Systems*, 26(11), 18963–18977, 2025. [DOI: 10.1109/TITS.2025.3597472](https://doi.org/10.1109/TITS.2025.3597472).
-
-> Bai Li, Dongpu Cao, Shiqi Tang, Tantan Zhang, Hairong Dong, Yaonan Wang, and Fei-Yue Wang, “Sharing Traffic Priorities via Cyber–Physical–Social Intelligence: A Lane-Free Autonomous Intersection Management Method in Metaverse,” *IEEE Transactions on Systems, Man, and Cybernetics: Systems*, 53(4), 2025–2036, 2023 (online in 2022). [DOI: 10.1109/TSMC.2022.3225250](https://doi.org/10.1109/TSMC.2022.3225250).
-
-BibTeX entries are in [CITATION.bib](CITATION.bib). Also follow [CasADi's citation guidance](https://web.casadi.org/docs/#citing-casadi) when publishing work using that numerical framework.
+Also follow [CasADi's citation guidance](https://web.casadi.org/docs/#citing-casadi) for work using its numerical framework.

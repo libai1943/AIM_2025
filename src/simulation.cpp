@@ -52,8 +52,10 @@ Fleet simulate(const Scenario &scene) {
       double desired_phi =
           std::clamp(p.turning * wrap(atan2(force[1], force[0]) - q[Theta]),
                      -p.phimax, p.phimax);
-      q[Omega] =
-          std::clamp((desired_phi - q[Phi]) / p.dt(), -p.omegamax, p.omegamax);
+      // Eq. (25) sets the steering angle directly in MVSFM. Steering-rate
+      // consistency is recovered by LIOM, rather than adding a rate-limited
+      // steering servo that is absent from the initialization method.
+      q[Phi] = desired_phi;
       // The paper leaves the longitudinal force-to-acceleration scaling
       // unspecified. Unit mass and projection along the current heading are the
       // demo convention.
@@ -63,7 +65,7 @@ Fleet simulate(const Scenario &scene) {
           std::clamp(q[A], (p.vmin - q[V]) / p.dt(), (p.vmax - q[V]) / p.dt());
       if (k == 0) {
         q[A] = vehicle.initial[A];
-        q[Omega] = vehicle.initial[Omega];
+        q[Phi] = vehicle.initial[Phi];
       }
       fleet[i][k] = q;
       State z = q;
@@ -71,7 +73,6 @@ Fleet simulate(const Scenario &scene) {
       z[Y] += p.dt() * q[V] * sin(q[Theta]);
       z[Theta] += p.dt() * q[V] * tan(q[Phi]) / vehicle.LW;
       z[V] += p.dt() * q[A];
-      z[Phi] += p.dt() * q[Omega];
       auto cc = center(vehicle, z);
       z[Xc] = cc[0];
       z[Yc] = cc[1];
@@ -79,6 +80,14 @@ Fleet simulate(const Scenario &scene) {
     }
     for (size_t i = 0; i < fleet.size(); ++i)
       fleet[i][k + 1] = next[i];
+  }
+  for (auto &trajectory : fleet) {
+    for (int k = 0; k < p.nodes - 1; ++k)
+      trajectory[k][Omega] = std::clamp(
+          (trajectory[k + 1][Phi] - trajectory[k][Phi]) / p.dt(),
+          -p.omegamax, p.omegamax);
+    trajectory.front()[Omega] = 0;
+    trajectory.back()[Omega] = 0;
   }
   return fleet;
 }

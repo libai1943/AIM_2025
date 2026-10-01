@@ -22,26 +22,26 @@ Scenario crossing_example() {
                  {24, 310, -310, -25},
                  {-310, -27, 24, 310},
                  {26, 310, 27, 310}};
-  Vehicle east;
-  east.initial[X] = -100;
-  east.initial[Y] = -8;
-  east.initial[V] = 5;
-  east.heading = 0;
-  east.exit = {40, -8};
-  east.desired = {310, -8};
-  Vehicle north;
-  north.LW = 5.3;
-  north.LF = 1.5;
-  north.LR = 1.6;
-  north.LB = 3.2;
-  north.initial[X] = 8;
-  north.initial[Y] = -130;
-  north.initial[V] = 5;
-  north.initial[Theta] = pi / 2;
-  north.heading = pi / 2;
-  north.exit = {8, 40};
-  north.desired = {8, 280};
-  s.vehicles = {east, north};
+  // Ten heterogeneous CAVs enter from all four legs. This is one joint NLP,
+  // with no imposed crossing order or precomputed final trajectories.
+  const std::array<std::array<double, 4>, 3> geometry{{
+      {5.73, 1.71, 1.90, 3.50}, {5.30, 1.50, 1.60, 3.20},
+      {4.90, 1.30, 1.50, 3.00}}};
+  for (int i = 0; i < 10; ++i) {
+    Vehicle v;
+    auto g = geometry[i % 3];
+    v.LW = g[0]; v.LF = g[1]; v.LR = g[2]; v.LB = g[3];
+    v.heading = (i % 4 == 3 ? -1 : i % 4) * pi / 2;
+    double ux = cos(v.heading), uy = sin(v.heading);
+    double distance = 30 + 11.5 * i;
+    v.initial[X] = -distance * ux + 12 * uy;
+    v.initial[Y] = -distance * uy - 12 * ux;
+    v.initial[V] = 5;
+    v.initial[Theta] = v.heading;
+    v.exit = {40 * ux + 12 * uy, 40 * uy - 12 * ux};
+    v.desired = {410 * ux + 12 * uy, 410 * uy - 12 * ux};
+    s.vehicles.push_back(v);
+  }
   for (auto &v : s.vehicles) {
     auto c = center(v, v.initial);
     v.initial[Xc] = c[0];

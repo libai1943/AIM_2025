@@ -1,4 +1,6 @@
 // Chapter 10 of the Chinese book: 非结构化场景自动驾驶轨迹规划技术.
+// Please cite Li et al., TSMC: Systems 2023 (online 2022),
+// doi:10.1109/TSMC.2022.3225250, and the following technical paper.
 // Computational example for Bu et al., T-ITS 2025,
 // doi:10.1109/TITS.2025.3597472.
 #include "aim/planner.hpp"
@@ -11,7 +13,7 @@
 int main(int argc, char **argv) {
   try {
     std::filesystem::path output = "results";
-    std::string linear_solver = "mumps";
+    std::string linear_solver = "ma27";
     auto scene = aim::crossing_example();
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
@@ -21,8 +23,9 @@ int main(int argc, char **argv) {
         linear_solver = argv[++i];
       else
         throw std::runtime_error(
-            "Usage: aim_demo [--output DIR] [--linear-solver mumps]");
+            "Usage: aim_demo [--output DIR] [--linear-solver ma27]");
     }
+    std::cout << "IPOPT linear solver: " << linear_solver << std::endl;
     auto begin = std::chrono::steady_clock::now();
     auto reference = aim::simulate(scene);
     std::cout << "MVSFM: " << reference.size() << " vehicles, "
