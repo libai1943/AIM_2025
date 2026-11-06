@@ -1,5 +1,7 @@
 # Lane-Free Cooperative Trajectory Planning
 
+[Download ZIP](https://github.com/libai1943/AIM_2025/archive/refs/heads/main.zip) · [Getting started](#install-the-numerical-dependencies) · [Guide](#files-and-responsibilities) · [Citation](#research-background-and-citation)
+
 **10 heterogeneous CAVs · C++ and MATLAB · CasADi / IPOPT / MA27**
 
 Companion code for **Chapter 10 of the Chinese-language book《非结构化场景自动驾驶轨迹规划技术》** — *Trajectory Planning Techniques for Autonomous Driving in Unstructured Environments* (English rendering of the Chinese title). This chapter studies cooperative trajectory planning at unstructured, unsignalized intersections: vehicles share the intersection space while avoiding one another and respecting vehicle kinematics.
@@ -7,6 +9,10 @@ Companion code for **Chapter 10 of the Chinese-language book《非结构化场�
 ![Ten jointly optimized vehicle trajectories and synchronized snapshots](docs/images/cooperative_trajectories.png)
 
 *An actual MATLAB run of the supplied ten-vehicle example. Colors identify vehicles; pale rectangles show body footprints. Each snapshot displays vehicles at the same instant. Crossings between complete spatial paths do not imply simultaneous collisions.*
+
+**Explore the example.** [Set up the solver](#install-the-numerical-dependencies) · [Read the scenario](matlab/CreateScenario.m) · [Inspect the physical checks](matlab/ValidateSolution.m) · [Cite the two papers](CITATION.bib)
+
+**Book citation.** 李柏 (Bai Li), *非结构化场景自动驾驶轨迹规划技术*, 机械工业出版社 (China Machine Press), June 2026, chapter 10. [Author’s bibliography](https://faculty.ecnu.edu.cn/_s15/lb2_26496/main.psp)
 
 ## Research background and citation
 
@@ -29,6 +35,16 @@ The example uses a **40 s horizon and 200 configurations per vehicle**. A run bu
 ![Optimal state and control histories for the ten CAVs](docs/images/state_control_profiles.png)
 
 The C++ and MATLAB versions implement the same scene, equations, bounds and solver settings. MATLAB performs its own optimization; it does not call the C++ program or load a saved answer. Neither version uses AMPL. This repository demonstrates **one cooperative cluster**; the papers also address the wider intersection-management setting, including priority sharing and successive clusters.
+
+### Follow one vehicle through the crossing
+
+After the MATLAB run, use the vehicle ID and time in `matlab/results/trajectories.csv` to align observations. Each row describes one vehicle at one instant. Plotting two complete paths reveals *where* they intersect. Comparing samples at the same time reveals *when* each car occupies that location.
+
+| To inspect | Read | Interpretation |
+| --- | --- | --- |
+| One vehicle's motion | `trajectories.csv` | `x,y` locate the rear axle, while `xc,yc` locate the covering-disc center. Use the latter when comparing disc clearances. |
+| Changes across optimizer iterations | `iterations.csv` | Follow `Jkinematics` and `Jslack` alongside `Jnorm` to separate feasibility improvements from smoother or faster progress. |
+| The tightest encounter | `solution.mat` → `result.metrics.pair_clearance` | Each entry is the minimum pairwise disc clearance over all vehicle pairs at that node. `minimum_clearance` also considers obstacles. |
 
 ## Method and architecture
 
